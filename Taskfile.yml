@@ -1,0 +1,111 @@
+version: '3'
+
+silent: true
+
+env:
+  ROOT: .task
+
+# PROJ must be set from env with `export PROJ=xxx`
+dotenv:
+  - '{{.ROOT}}/.env'
+
+vars:
+  # GO_MODULE is only used to find the module's versions.version
+  GO_MODULE: github.com/coghost/bilibili_cache_converter
+  PROJ_ENV_DIR: '{{.ROOT}}/{{.PROJ}}'
+  VERSION_FILE: '{{.PROJ_ENV_DIR}}/.version'
+  PUBLIC: '/tmp/public'
+  EXE_NAME: bilibili-cache-converter
+  BUILD_OUTPUT: '/tmp/public/{{.EXE_NAME}}'
+  RUNNER: '{{.BUILD_OUTPUT}}'
+
+tasks:
+  lint:
+    desc: Runs golangci-lint
+    aliases: [l]
+    cmds:
+      - golangci-lint run ./...
+
+  build-*-*:
+    desc: build {{.PROJ}}
+    internal: true
+    vars:
+      V_OS: '{{index .MATCH 0}}'
+      V_ARCH: '{{index .MATCH 1}}'
+      MINOR:
+        sh: cat {{.VERSION_FILE}}
+      VER: '{{.MAJOR}}.{{.MINOR}}'
+      BUILD_OUTPUT: '{{.BUILD_OUTPUT}}-{{.V_OS}}-{{.V_ARCH}}'
+      PROJ: '{{.PROJ}}'
+    cmds:
+      - env GOOS={{.V_OS}} GOARCH={{.V_ARCH}} go build -ldflags="-X '{{.GO_MODULE}}/versions.Version=v{{.VER}}'" -o {{.BUILD_OUTPUT}} ./app/{{.PROJ}}
+      - echo $(echo "{{.MINOR}}+1"|bc) > "{{.VERSION_FILE}}"
+      - cp {{.BUILD_OUTPUT}} {{.RUNNER}}
+    requires:
+      vars: [PROJ]
+
+  builddev-*-*:
+    desc: build {{.PROJ}}
+    internal: true
+    vars:
+      V_OS: '{{index .MATCH 0}}'
+      V_ARCH: '{{index .MATCH 1}}'
+      VER:
+        sh: echo 0.x.`date +%m%d%H%M`
+      BUILD_OUTPUT: '{{.BUILD_OUTPUT}}-{{.V_OS}}-{{.V_ARCH}}'
+      PROJ: '{{.PROJ}}'
+    cmds:
+      - env GOOS={{.V_OS}} GOARCH={{.V_ARCH}} go build -ldflags="-X '{{.GO_MODULE}}/versions.Version=v{{.VER}}'" -o {{.BUILD_OUTPUT}} ./app/{{.PROJ}}
+      - cp {{.BUILD_OUTPUT}} {{.RUNNER}}
+    requires:
+      vars: [PROJ]
+
+  lazybuild:arm64*:
+    desc: build for {{OS}} arm64
+    internal: true
+    silent: true
+    # add sources here to prevent unnecessary work
+    sources:
+      - './**/*.go'
+      - './**/*.yaml'
+      - './**/*.yml'
+      - exclude: './**/*_test.go'
+      - exclude: './**/Taskfile*.yml'
+    vars:
+      dev: '{{index .MATCH 0}}'
+    cmds:
+      - task: build{{.dev}}-{{OS}}-arm64
+        vars:
+          # PROJ: '{{.PROJ}}'
+          # VERSION_FILE: '{{.VERSION_FILE}}'
+          BUILD_OUTPUT: '{{.BUILD_OUTPUT}}'
+
+  lazybuild:amd64*:
+    desc: build for {{OS}} amd64
+    internal: true
+    silent: true
+    # add sources here to prevent unnecessary work
+    sources:
+      - './**/*.go'
+      - './**/*.yaml'
+      - exclude: './**/*_test.go'
+    vars:
+      dev: '{{index .MATCH 0}}'
+    cmds:
+      - task: build{{.dev}}-{{OS}}-amd64
+        vars:
+          # PROJ: '{{.PROJ}}'
+          # VERSION_FILE: '{{.VERSION_FILE}}'
+          BUILD_OUTPUT: '{{.BUILD_OUTPUT}}'
+
+  bamd:
+    desc: run bilibili converter
+    deps: [lazybuild:amd64dev]
+    cmds:
+      - echo "done"
+
+  b:
+    desc: run bilibili converter
+    deps: [lazybuild:arm64dev]
+    cmds:
+      - PROJ={{.PROJ}} {{.RUNNER}} {{.CLI_ARGS}}
